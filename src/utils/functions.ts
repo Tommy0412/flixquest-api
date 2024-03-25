@@ -12,8 +12,8 @@ import dotenv from "dotenv";
 import { tmdbBaseUrl, tmdbKey } from "../constants/api_constants";
 import { ResolutionStream, SubData, supportedLanguages } from "./types";
 import { FastifyReply } from "fastify";
-import { redis } from "../index";
-import cache from "../utils/cache";
+import { redis } from "../app";
+import cache from "./cache";
 dotenv.config();
 const proxyUrl = process.env.WORKERS_URL;
 
@@ -233,9 +233,12 @@ export async function fetchHlsLinks(
     server: string,
 ) {
     let key = `${provider}`;
+    if (server === "undefined") {
+        server = "-";
+    }
     media.type === "show"
-        ? (key += `:show:${media.tmdbId}:${media.season.number}:${media.episode.number}`)
-        : (key += `:movie:${media.tmdbId}`);
+        ? (key += `:${server}:show:${media.tmdbId}:${media.season.number}:${media.episode.number}`)
+        : (key += `:${server}:movie:${media.tmdbId}`);
 
     const fetchLinks = async () => {
         let videoSources: ResolutionStream[] = [];
@@ -253,7 +256,7 @@ export async function fetchHlsLinks(
             let foundIndex = -1;
 
             if (server !== "undefined") {
-                if (server !== "") {
+                if (server !== "-") {
                     for (let i = 0; i < outputEmbed.embeds.length; i++) {
                         if (outputEmbed.embeds[i].embedId === server) {
                             foundIndex = i;
@@ -345,55 +348,68 @@ export async function fetchDash(
         let subSources: SubData[] = [];
 
         try {
-            const output = await providers(proxied, reply).runAll({
+            const outputEmbed = await providers(
+                proxied,
+                reply,
+            ).runSourceScraper({
                 media: media,
-                embedOrder: [provider],
+                id: provider,
             });
 
-            if (output?.stream?.type === "file") {
-                if (output.stream.qualities[1080] != undefined) {
+            const output = await providers(proxied, reply).runEmbedScraper({
+                id: outputEmbed.embeds[0].embedId,
+                url: outputEmbed.embeds[0].url,
+            });
+
+            if (output?.stream[0]?.type === "file") {
+                if (output.stream[0].qualities["4k"] != undefined) {
+                    videoSources.push({
+                        quality: "4K",
+                        url: output.stream[0].qualities["4k"].url,
+                        isM3U8: false,
+                    });
+                }
+                if (output.stream[0].qualities[1080] != undefined) {
                     videoSources.push({
                         quality: "1080",
-                        url: output.stream.qualities[1080].url,
+                        url: output.stream[0].qualities[1080].url,
                         isM3U8: false,
                     });
                 }
-                if (output.stream.qualities[720] != undefined) {
+                if (output.stream[0].qualities[720] != undefined) {
                     videoSources.push({
                         quality: "720",
-                        url: output.stream.qualities[720].url,
+                        url: output.stream[0].qualities[720].url,
                         isM3U8: false,
                     });
                 }
-                if (output.stream.qualities[480] != undefined) {
+                if (output.stream[0].qualities[480] != undefined) {
                     videoSources.push({
                         quality: "480",
-                        url: output.stream.qualities[480].url,
+                        url: output.stream[0].qualities[480].url,
                         isM3U8: false,
                     });
                 }
-                if (output.stream.qualities[360] != undefined) {
+                if (output.stream[0].qualities[360] != undefined) {
                     videoSources.push({
                         quality: "360",
-                        url: output.stream.qualities[360].url,
+                        url: output.stream[0].qualities[360].url,
                         isM3U8: false,
                     });
                 }
 
-                for (let i = 0; i < output.stream.captions.length; i++) {
+                for (let i = 0; i < output.stream[0].captions.length; i++) {
                     subSources.push({
-                        lang: langConverter(output.stream.captions[i].language),
-                        url: output.stream.captions[i].url,
+                        lang: langConverter(
+                            output.stream[0].captions[i].language,
+                        ),
+                        url: output.stream[0].captions[i].url,
                     });
                 }
-            }
-
-            if (videoSources.length === 0) {
-                throw new NotFoundError("Source empty");
             }
 
             const dataToCache = {
-                server: output?.sourceId,
+                server: outputEmbed.embeds[0].embedId,
                 sources: videoSources,
                 subtitles: subSources,
             };
