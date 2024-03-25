@@ -56,7 +56,7 @@ async function startServer() {
         methods: "GET",
     });
 
-    await fastify.register(showbox, { prefix: "/superstream" });
+    await fastify.register(superstream, { prefix: "/superstream" });
     await fastify.register(showbox, { prefix: "/showbox" });
     await fastify.register(flixhq, { prefix: "/flixhq" });
     await fastify.register(zoe, { prefix: "/zoe" });
